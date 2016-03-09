@@ -1,0 +1,53 @@
+!_TAG_FILE_FORMAT	2	/extended format; --format=1 will not append ;" to lines/
+!_TAG_FILE_SORTED	1	/0=unsorted, 1=sorted, 2=foldcase/
+!_TAG_PROGRAM_AUTHOR	Darren Hiebert	/dhiebert@users.sourceforge.net/
+!_TAG_PROGRAM_NAME	Exuberant Ctags	//
+!_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
+!_TAG_PROGRAM_VERSION	5.8	//
+BatchLoaderUnk.create	util/BatchLoaderUnk.lua	/^function BatchLoaderUnk.create(data_dir, batch_size, seq_length, max_word_l)$/;"	f
+BatchLoaderUnk.text_to_tensor	util/BatchLoaderUnk.lua	/^function BatchLoaderUnk.text_to_tensor(input_files, out_vocabfile, out_tensorfile, out_charfile, max_word_l)$/;"	f
+BatchLoaderUnk:next_batch	util/BatchLoaderUnk.lua	/^function BatchLoaderUnk:next_batch(split_idx)$/;"	f
+BatchLoaderUnk:reset_batch_pointer	util/BatchLoaderUnk.lua	/^function BatchLoaderUnk:reset_batch_pointer(split_idx, batch_idx)$/;"	f
+Diag:__init	util/Diag.lua	/^function Diag:__init(pos, length)$/;"	f
+Diag:accGradParameters	util/Diag.lua	/^function Diag:accGradParameters(input, gradOutput)$/;"	f
+Diag:reset	util/Diag.lua	/^function Diag:reset(stdv)$/;"	f
+Diag:updateGradInput	util/Diag.lua	/^function Diag:updateGradInput(input, gradOutput)$/;"	f
+Diag:updateOutput	util/Diag.lua	/^function Diag:updateOutput(input)$/;"	f
+HLogSoftMax:__init	util/HLogSoftMax.lua	/^function HLogSoftMax:__init(mapping, input_size)$/;"	f
+HLogSoftMax:backward	util/HLogSoftMax.lua	/^function HLogSoftMax:backward(input, target, scale)$/;"	f
+HLogSoftMax:change_bias	util/HLogSoftMax.lua	/^function HLogSoftMax:change_bias()$/;"	f
+HLogSoftMax:clone	util/HLogSoftMax.lua	/^function HLogSoftMax:clone(...)$/;"	f
+HLogSoftMax:getParameters	util/HLogSoftMax.lua	/^function HLogSoftMax:getParameters()$/;"	f
+HLogSoftMax:parameters	util/HLogSoftMax.lua	/^function HLogSoftMax:parameters()$/;"	f
+HLogSoftMax:updateGradInput	util/HLogSoftMax.lua	/^function HLogSoftMax:updateGradInput(input, target)$/;"	f
+HLogSoftMax:updateOutput	util/HLogSoftMax.lua	/^function HLogSoftMax:updateOutput(input, target)$/;"	f
+HSMClass.hsm	util/HSMClass.lua	/^function HSMClass.hsm(input_size, n_clusters, n_max_class_in_cluster)$/;"	f
+HighwayMLP.mlp	model/HighwayMLP.lua	/^function HighwayMLP.mlp(size, num_layers, bias, f)$/;"	f
+LSTMTDNN.lstmtdnn	model/LSTMTDNN.lua	/^function LSTMTDNN.lstmtdnn(rnn_size, n, dropout, word_vocab_size, word_vec_size, char_vocab_size, char_vec_size,$/;"	f
+OneHot:__init	util/OneHot.lua	/^function OneHot:__init(outputSize)$/;"	f
+OneHot:updateOutput	util/OneHot.lua	/^function OneHot:updateOutput(input)$/;"	f
+OuterProd:__init	util/OuterProd.lua	/^function OuterProd:__init()$/;"	f
+OuterProd:updateGradInput	util/OuterProd.lua	/^function OuterProd:updateGradInput(input, gradOutput)$/;"	f
+OuterProd:updateOutput	util/OuterProd.lua	/^function OuterProd:updateOutput(input)$/;"	f
+Squeeze:updateGradInput	util/Squeeze.lua	/^function Squeeze:updateGradInput(input, gradOutput)$/;"	f
+Squeeze:updateOutput	util/Squeeze.lua	/^function Squeeze:updateOutput(input)$/;"	f
+TDNN.tdnn	model/TDNN.lua	/^function TDNN.tdnn(length, input_size, feature_maps, kernels)$/;"	f
+TensorProd:__init	util/TensorProd.lua	/^function TensorProd:__init(vec1_size, vec2_size, output_size)$/;"	f
+TensorProd:__tostring__	util/TensorProd.lua	/^function TensorProd:__tostring__()$/;"	f
+TensorProd:accGradParameters	util/TensorProd.lua	/^function TensorProd:accGradParameters(input, gradOutput)$/;"	f
+TensorProd:reset	util/TensorProd.lua	/^function TensorProd:reset(stdv)$/;"	f
+TensorProd:updateGradInput	util/TensorProd.lua	/^function TensorProd:updateGradInput(input, gradOutput)$/;"	f
+TensorProd:updateOutput	util/TensorProd.lua	/^function TensorProd:updateOutput(input)$/;"	f
+append	util/BatchLoaderUnk.lua	/^             function append(word)$/;"	f
+clone_list	util/misc.lua	/^function clone_list(tensor_list, zero_too)$/;"	f
+eval_split	main.lua	/^function eval_split(split_idx, max_batches)$/;"	f
+eval_split_full	evaluate.lua	/^function eval_split_full(split_idx)$/;"	f
+feval	main.lua	/^function feval(x)$/;"	f
+flatten	util/model_utils.lua	/^    local function flatten(parameters)$/;"	f
+get_input	evaluate.lua	/^function get_input(x, x_char, t, prev_states)$/;"	f
+get_input	main.lua	/^function get_input(x, x_char, t, prev_states)$/;"	f
+get_layer	main.lua	/^function get_layer(layer)$/;"	f
+local get_layer 	util/HLogSoftMax.lua	/^    local get_layer = function (layer)$/;"	f
+model_utils.clone_many_times	util/model_utils.lua	/^function model_utils.clone_many_times(net, T)$/;"	f
+model_utils.combine_all_parameters	util/model_utils.lua	/^function model_utils.combine_all_parameters(...)$/;"	f
+storageInSet	util/model_utils.lua	/^    local function storageInSet(set, storage)$/;"	f
