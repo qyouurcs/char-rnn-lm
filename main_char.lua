@@ -5,7 +5,7 @@ Predictions are still made at the word-level.
 Much of the code is borrowed from the following implementations
 https://github.com/karpathy/char-rnn
 https://github.com/wojzaremba/lstm
-]]--
+]]
 
 require 'torch'
 require 'nn'
@@ -14,6 +14,8 @@ require 'lfs'
 require 'util.misc'
 
 debugger = require('fb.debugger')
+
+printf = utils.printf
 
 BatchLoader = require 'util.BatchLoaderUnk'
 model_utils = require 'util.model_utils'
@@ -39,7 +41,7 @@ cmd:option('-learning_rate_decay',0.5,'learning rate decay')
 cmd:option('-decay_when',1,'decay if validation perplexity does not improve by more than this much')
 cmd:option('-param_init', 0.05, 'initialize parameters at')
 cmd:option('-seq_length',35,'number of timesteps to unroll for')
-cmd:option('-batch_size',100,'number of sequences to train on in parallel')
+cmd:option('-batch_size',256,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',25,'number of full passes through the training data')
 cmd:option('-max_grad_norm',5,'normalize gradients at')
 cmd:option('-max_word_l',65,'maximum word length')
@@ -47,11 +49,12 @@ cmd:option('-max_word_l',65,'maximum word length')
 cmd:option('-seed',3435,'torch manual random number generator seed')
 cmd:option('-print_every',100,'how many steps/minibatches between printing out the loss')
 cmd:option('-save_every', 5, 'save every n epochs')
+cmd:option('-EOS', '+', '<EOS> symbol. should be a single unused character (like +) for PTB and blank for others')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','char','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 cmd:option('-time', 0, 'print batch times')
 -- GPU/CPU
-cmd:option('-gpuid', -1,'which gpu to use. -1 = use CPU')
+cmd:option('-gpuid', 0,'which gpu to use. -1 = use CPU')
 cmd:option('-cudnn', 0,'use cudnn (1=yes). this should greatly speed up convolutions')
 cmd:text()
 
@@ -61,6 +64,7 @@ torch.manualSeed(opt.seed)
 
 -- global constants for certain tokens
 opt.tokens = {}
+opt.tokens.EOS = opt.EOS
 opt.tokens.UNK = '|' -- unk word token
 opt.tokens.START = '{' -- start-of-word token
 opt.tokens.END = '}' -- end-of-word token
@@ -84,10 +88,13 @@ loader = BatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, opt.ma
 print('Word vocab size: ' .. #loader.idx2word .. ', Char vocab size: ' .. #loader.idx2char
         .. ', Max word length (incl. padding): ', loader.max_word_l)
 
+max_word_l = loader.max_word_l
 -- load model objects. we do this here because of cudnn and hsm options
 C2W = require 'model.C2W'
 V2C = require 'model.V2C'
-LSTM = require 'model.LSTM_w'
+LSTM_w = require 'model.LSTM_w'
+LSTM_c = require 'model.LSTM_c'
+LSTM_v = require 'model.LSTM_v'
 
 char_vocab_size = #loader.idx2char
 word_vocab_size = #loader.idx2word
@@ -107,21 +114,36 @@ protos.criterion = nn.ClassNLLCriterion()
 -- the initial state of the cell/hidden states
 init_state = {}
 for L=1,opt.num_layers do
-    --local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
-    local h_init = torch.zeros(opt.rnn_size)
+    local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
     if opt.gpuid >=0 then h_init = h_init:cuda() end
     table.insert(init_state, h_init:clone())
     table.insert(init_state, h_init:clone())
 end
-
-params, grad_params = model_utils.combine_all_parameters(protos.rnn)
-
-protos.c2w = C2W(opt.max_word_l, char_vocab_size, opt.char_rnn_size, opt.gpuid)
-protos.v2c = V2C(opt.max_word_l, opt.rnn_size, char_vocab_size, opt.char_rnn_size)
-
 if opt.gpuid >= 0 then
     for k,v in pairs(protos) do v:cuda() end
 end
+
+
+
+params, grad_params = model_utils.combine_all_parameters(protos.rnn)
+-- initialization
+params:uniform(-opt.param_init, opt.param_init) -- small numbers uniform
+
+clones = {}
+for name,proto in pairs(protos) do
+    print('cloning ' .. name)
+    clones[name] = model_utils.clone_many_times(proto, opt.seq_length, not proto.parameters)
+end
+
+
+protos.c2w = nn.C2W(max_word_l, opt.batch_size, char_vocab_size, opt.char_rnn_size, opt.gpuid)
+protos.v2c = nn.V2C(max_word_l, opt.rnn_size, char_vocab_size, opt.char_rnn_size, opt.batch_size, opt.gpuid)
+
+if opt.gpuid >= 0 then
+    protos.c2w:cuda()
+    protos.v2c:cuda()
+end
+
 
 -- put the above things into one flattened parameters tensor
 
@@ -132,43 +154,34 @@ print('number of parameters in the rnn model: ' .. params:nElement())
 print('number of parameters in the c2w model: ' .. params_c2w:nElement())
 print('number of parameters in the v2c model: ' .. params_v2c:nElement())
 
--- initialization
-params:uniform(-opt.param_init, opt.param_init) -- small numbers uniform
-
 -- get layers which will be referenced layer (during SGD or introspection)
-function get_layer(layer)
-    local tn = torch.typename(layer)
-    if layer.name ~= nil then
-        if layer.name == 'word_vecs' then
-            word_vecs = layer
-        elseif layer.name == 'char_vecs' then
-            char_vecs = layer
-        elseif layer.name == 'cnn' then
-            cnn = layer
-        end
-    end
-end 
-protos.rnn:apply(get_layer)
+--function get_layer(layer)
+--    local tn = torch.typename(layer)
+--    if layer.name ~= nil then
+--        if layer.name == 'word_vecs' then
+--            word_vecs = layer
+--        elseif layer.name == 'char_vecs' then
+--            char_vecs = layer
+--        elseif layer.name == 'cnn' then
+--            cnn = layer
+--        end
+--    end
+--end 
+--protos.rnn:apply(get_layer)
 
-clones_rnn = model_utils.clone_many_times(proto.rnn, opt.seq_length)
 
 -- for easy switch between using words/chars (or both)
-function get_input(x, x_char, t, prev_states)
+function get_input( x_char, t, prev_states)
     local u = {}
-    if opt.use_chars == 1 then table.insert(u, x_char[{{},t}]) end
-    if opt.use_words == 1 then table.insert(u, x[{{},t}]) end
+    table.insert(u, x_char[{{},t}])
     for i = 1, #prev_states do table.insert(u, prev_states[i]) end
     return u
 end
-
 
 -- evaluate the loss over an entire split
 function eval_split(split_idx, max_batches)
     print('evaluating loss over split index ' .. split_idx)
     local n = loader.split_sizes[split_idx]
-    if opt.hsm > 0 then
-        protos.criterion:change_bias()
-    end
 
     if max_batches ~= nil then n = math.min(max_batches, n) end
 
@@ -176,52 +189,95 @@ function eval_split(split_idx, max_batches)
     local loss = 0
     local rnn_state = {[0] = init_state}    
     if split_idx<=2 then -- batch eval        
-    for i = 1,n do -- iterate over batches in the split
-        -- fetch a batch
-        local x, y, x_char = loader:next_batch(split_idx)
-        if opt.gpuid >= 0 then -- ship the input arrays to GPU
-        -- have to convert to float because integers can't be cuda()'d
-        x = x:float():cuda()
-        y = y:float():cuda()
-        x_char = x_char:float():cuda()
-        end
-        -- forward pass
-        for t=1,opt.seq_length do
-            clones.rnn[t]:evaluate() -- for dropout proper functioning
-            local lst = clones.rnn[t]:forward(get_input(x, x_char, t, rnn_state[t-1]))
-            rnn_state[t] = {}
-            for i=1,#init_state do 
-                table.insert(rnn_state[t], lst[i])
+        for i = 1,n do -- iterate over batches in the split
+            -- fetch a batch
+            local x, y, x_char, y_char = loader:next_batch(split_idx)
+            if opt.gpuid >= 0 then -- ship the input arrays to GPU
+            -- have to convert to float because integers can't be cuda()'d
+            x = x:float():cuda()
+            y = y:float():cuda()
+            x_char = x_char:float():cuda()
+            y_char = y_char:float():cuda()
             end
-            prediction = lst[#lst]
-                loss = loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
+
+            local hid_w = {} -- keeps the hidden state and pass it to the V2C module.
+            local loss = 0
+            local predictions = {}
+            for t=1,opt.seq_length do
+                clones.rnn[t]:evaluate() -- for dropout proper functioning
+                -- First, we need to run the C2W to generate the word representations from the chars.
+                -- we only need the word itself.
+                x_c2w = protos.c2w:forward(x_char[{{},t}], true, loader.char2idx)
+                --debugger.enter()
+                local lst = clones.rnn[t]:forward({x_c2w, unpack(rnn_state[t-1])})
+                rnn_state[t] = {}
+                for i=1,#init_state do 
+                    table.insert(rnn_state[t], lst[i]) 
+                end 
+                hid_w[t] = lst[#lst] -- keep the last hidden state.
+            end
+            -- Now, it's time to call the V2C module.
+            for t = 1, opt.seq_length do
+                -- Now, this is the predictions
+                v2c_y = protos.v2c:forward(x_char[{{},t}], hid_w[t])
+                predictions[t] = v2c_y
+                local flat_p = torch.reshape(v2c_y, opt.batch_size * max_word_l, char_vocab_size)
+                local flat_y = torch.reshape(y_char, y_char:nElement())
+                loss = loss + clones.criterion[t]:forward(flat_p, flat_y)
+                --loss = loss + clones.criterion[t]:forward(predictions[t], y_char[{{}, t}])
+            end
+
+            loss = loss / opt.seq_length
+ 
+            -- carry over lstm state
+            -- Do not consider this yet.
+            --rnn_state[0] = rnn_state[#rnn_state]
         end
-        -- carry over lstm state
-        rnn_state[0] = rnn_state[#rnn_state]
-    end
-    loss = loss / opt.seq_length / n
+        loss = loss / opt.seq_length / n
+        printf(' %s ', os.date())
+        print(string.format(" val_loss = %6.4f", loss))
     else -- full eval on test set
         local token_perp = torch.zeros(#loader.idx2word, 2) 
-        local x, y, x_char = loader:next_batch(split_idx)
-    if opt.gpuid >= 0 then -- ship the input arrays to GPU
-        -- have to convert to float because integers can't be cuda()'d
-        x = x:float():cuda()
-        y = y:float():cuda()
-        x_char = x_char:float():cuda()
-    end
-    protos.rnn:evaluate() -- just need one clone
-    for t = 1, x:size(2) do
-        local lst = protos.rnn:forward(get_input(x, x_char, t, rnn_state[0]))
-        rnn_state[0] = {}
-        for i=1,#init_state do table.insert(rnn_state[0], lst[i]) end
-        prediction = lst[#lst] 
-            local tok_perp
-            tok_perp = protos.criterion:forward(prediction, y[{{},t}])
-            loss = loss + tok_perp
-            token_perp[y[1][t]][1] = token_perp[y[1][t]][1] + 1 --count
-            token_perp[y[1][t]][2] = token_perp[y[1][t]][2] + tok_perp
-    end
-    loss = loss / x:size(2)
+        local x, y, x_char, y_char = loader:next_batch(split_idx)
+        if opt.gpuid >= 0 then -- ship the input arrays to GPU
+            -- have to convert to float because integers can't be cuda()'d
+            x = x:float():cuda()
+            y = y:float():cuda()
+            x_char = x_char:float():cuda()
+            y_char = y_char:float():cuda()
+        end
+
+        protos.rnn:evaluate() -- just need one clone
+
+        local rnn_state = {[0] = init_state_global}
+        local hid_w = {} -- keeps the hidden state and pass it to the V2C module.
+        local loss = 0
+        local predictions = {}
+        for t=1,opt.seq_length do
+            clones.rnn[t]:evaluate() -- make sure we are in correct mode (this is cheap, sets flag)        
+            -- First, we need to run the C2W to generate the word representations from the chars.
+            -- we only need the word itself.
+            x_c2w = protos.c2w:forward(x_char[{{},t}], true)
+            --debugger.enter()
+            local lst = clones.rnn[t]:forward({x_c2w, unpack(rnn_state[t-1])})
+            rnn_state[t] = {}
+            for i=1,#init_state do 
+                table.insert(rnn_state[t], lst[i]) 
+            end 
+            hid_w[t] = lst[#lst] -- keep the last hidden state.
+        end
+        -- Now, it's time to call the V2C module.
+        for t = 1, opt.seq_length do
+            -- Now, this is the predictions
+            v2c_y = protos.v2c:forward(x_char[{{},t}], hid_w[t])
+            predictions[t] = v2c_y
+            local flat_p = torch.reshape(v2c_y, opt.batch_size * max_word_l, char_vocab_size)
+            local flat_y = torch.reshape(y_char, y_char:nElement())
+            loss = loss + clones.criterion[t]:forward(flat_p, flat_y)
+        end
+
+        loss = loss / opt.seq_length
+
     end    
     local perp = torch.exp(loss)    
     return perp, token_perp
@@ -234,50 +290,85 @@ function feval(x)
         params:copy(x)
     end
     grad_params:zero()
-    if opt.hsm > 0 then
-        hsm_grad_params:zero()
-    end
+    grad_params_c2w:zero()
+    grad_params_v2c:zero()
     ------------------ get minibatch -------------------
-    local x, y, x_char = loader:next_batch(1) --from train
+    local x, y, x_char, y_char = loader:next_batch(1) --from train
     if opt.gpuid >= 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
         y = y:float():cuda()
         x_char = x_char:float():cuda()
+        y_char = y_char:float():cuda()
     end
     ------------------- forward pass -------------------
     local rnn_state = {[0] = init_state_global}
-    local predictions = {}           -- softmax outputs
+    local hid_w = {} -- keeps the hidden state and pass it to the V2C module.
     local loss = 0
+    local predictions = {}
+    local x_c2w_tab = {} -- for bp
     for t=1,opt.seq_length do
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)        
-        local lst = clones.rnn[t]:forward(get_input(x, x_char, t, rnn_state[t-1]))
+        -- First, we need to run the C2W to generate the word representations from the chars.
+        -- we only need the word itself.
+        x_c2w = protos.c2w:forward(x_char[{{},t}], true)
+        x_c2w_tab[t] = x_c2w
+        --debugger.enter()
+        local lst = clones.rnn[t]:forward({x_c2w, unpack(rnn_state[t-1])})
         rnn_state[t] = {}
         for i=1,#init_state do 
             table.insert(rnn_state[t], lst[i]) 
-        end -- extract the state, without output
-        predictions[t] = lst[#lst] -- last element is the prediction
-        loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
+        end 
+        hid_w[t] = lst[#lst] -- keep the last hidden state.
     end
+    -- Now, it's time to call the V2C module.
+    for t = 1, opt.seq_length do
+        -- Now, this is the predictions
+        v2c_y = protos.v2c:forward(x_char[{{},t}], hid_w[t])
+        predictions[t] = v2c_y
+        local flat_p = torch.reshape(v2c_y, opt.batch_size * max_word_l, char_vocab_size)
+        local flat_y = torch.reshape(y_char, y_char:nElement())
+        -- To calculate, we need to flat the matrix()
+        loss = loss + clones.criterion[t]:forward(flat_p, flat_y)
+    end
+
     loss = loss / opt.seq_length
     ------------------ backward pass -------------------
     -- initialize gradient at time t to be zeros (there's no influence from future)
-    local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones
-    for t=opt.seq_length,1,-1 do
+    local drnn_v2c = {}
+    for t = opt.seq_length,1,-1 do
         -- backprop through loss, and softmax/linear
-        local doutput_t = clones.criterion[t]:backward(predictions[t], y[{{}, t}])
-        table.insert(drnn_state[t], doutput_t)
-        table.insert(rnn_state[t-1], drnn_state[t])
-        local dlst = clones.rnn[t]:backward(get_input(x, x_char, t, rnn_state[t-1]), drnn_state[t])
+        -- First, do it on the V2C module.
+        local flat_p = torch.reshape(predictions[t], opt.batch_size * max_word_l, char_vocab_size)
+        local flat_y = torch.reshape(y_char, y_char:nElement())
+        local doutput_t = clones.criterion[t]:backward(flat_p, flat_y)
+        doutput_t = torch.reshape(doutput_t, opt.batch_size,  max_word_l, char_vocab_size)
+        local v2c_grad = protos.v2c:backward(x_char[{{},t}], hid_w[t], doutput_t)
+        drnn_v2c[t] = v2c_grad
+    end
+    
+    -- Now, bp the RNN.
+    local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones
+    for t = opt.seq_length, 1, -1 do
+        --table.insert(drnn_state[t], drnn_v2c[t])
+        drnn_state[t][#drnn_state[t]] = drnn_state[t][#drnn_state[t]] + drnn_v2c[t] -- Replace the last one with the current one.
+        --table.insert(rnn_state[t-1], drnn_state[t])
+        local dlst = clones.rnn[t]:backward({x_c2w_tab[t],unpack(rnn_state[t-1])}, drnn_state[t])
+
         drnn_state[t-1] = {}
-        local tmp = opt.use_words + opt.use_chars -- not the safest way but quick
+        local dc2s
         for k,v in pairs(dlst) do
-            if k > tmp then -- k == 1 is gradient on x, which we dont need
-                -- note we do k-1 because first item is dembeddings, and then follow the 
+            if k > 1 then
                 -- derivatives of the state, starting at index 2. I know...
-                drnn_state[t-1][k-tmp] = v
+                drnn_state[t-1][k-1] = v
+            else
+                -- Here is the derivative for the c2w module.
+                dc2s = v
             end
-        end    
+        end 
+        -- Now bp the c2w module
+
+        x_c2w = protos.c2w:backward(x_char[{{},t}], dc2s)
     end
 
     ------------------------ misc ----------------------
@@ -286,22 +377,17 @@ function feval(x)
     
     -- renormalize gradients
     local grad_norm, shrink_factor
-    if opt.hsm==0 then
-        grad_norm = grad_params:norm()
-    else
-        grad_norm = torch.sqrt(grad_params:norm()^2 + hsm_grad_params:norm()^2)
-    end
+    grad_norm = torch.sqrt(grad_params:norm()^2 + grad_params_c2w:norm()^2 + grad_params_v2c:norm()^2)
+
     if grad_norm > opt.max_grad_norm then
         shrink_factor = opt.max_grad_norm / grad_norm
         grad_params:mul(shrink_factor)
-        if opt.hsm > 0 then
-            hsm_grad_params:mul(shrink_factor)
-        end
+        grad_params_c2w:mul(shrink_factor)
+        grad_params_v2c:mul(shrink_factor)
     end    
     params:add(grad_params:mul(-lr)) -- update params
-    if opt.hsm > 0 then
-        hsm_params:add(hsm_grad_params:mul(-lr))
-    end
+    params_c2w:add(grad_params_c2w:mul(-lr)) -- update params
+    params_v2c:add(grad_params_v2c:mul(-lr)) -- update params
     return torch.exp(loss)
 end
 
@@ -313,6 +399,7 @@ lr = opt.learning_rate -- starting learning rate which will be decayed
 local iterations = opt.max_epochs * loader.split_sizes[1]
 if char_vecs ~= nil then char_vecs.weight[1]:zero() end -- zero-padding vector is always zero
 for i = 1, iterations do
+    --print(' i = ' .. tostring(i))
     local epoch = i / loader.split_sizes[1]
 
     local timer = torch.Timer()
@@ -325,6 +412,7 @@ for i = 1, iterations do
     end 
     train_losses[i] = train_loss
 
+    --local val_loss = eval_split(2) -- 2 = validation
     -- every now and then or on last iteration
     if i % loader.split_sizes[1] == 0 then
         -- evaluate loss on validation data
@@ -355,6 +443,7 @@ for i = 1, iterations do
     end    
 
     if i % opt.print_every == 0 then
+        printf(' %s ', os.date())
         print(string.format("%d/%d (epoch %.2f), train_loss = %6.4f", i, iterations, epoch, train_loss))
     end   
     if i % 10 == 0 then collectgarbage() end

@@ -5,7 +5,7 @@ function LSTM_w.lstm(input_size, rnn_size, n, dropout)
 
   -- there will be 2*n+1 inputs
   local inputs = {}
-  table.insert(inputs, nn.Identity()()) -- x
+  table.insert(inputs, nn.Identity()()) -- x: batch_size * 1
   for L = 1,n do
     table.insert(inputs, nn.Identity()()) -- prev_c[L]
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
@@ -19,12 +19,12 @@ function LSTM_w.lstm(input_size, rnn_size, n, dropout)
     local prev_c = inputs[L*2]
     -- the input to this layer
     if L == 1 then 
-      x = inputs[1]
-      input_size_L = input_size
+        x = inputs[1] -- batch_size * input_size -- only one word.
+        input_size_L = input_size
     else 
-      x = outputs[(L-1)*2] 
-      if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
-      input_size_L = rnn_size
+        x = outputs[(L-1)*2] 
+        if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
+        input_size_L = rnn_size
     end
     -- evaluate the input sums at once for efficiency
     local i2h = nn.Linear(input_size_L, 4 * rnn_size)(x):annotate{name='i2h_'..L}

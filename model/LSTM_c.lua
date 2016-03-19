@@ -1,4 +1,4 @@
-
+debugger = require('fb.debugger')
 local LSTM_c = {}
 function LSTM_c.lstm(input_size, rnn_size, n, dropout)
   dropout = dropout or 0 
