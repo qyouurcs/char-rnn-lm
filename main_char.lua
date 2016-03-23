@@ -191,7 +191,7 @@ function eval_split(split_idx, max_batches)
     if split_idx<=2 then -- batch eval        
         for i = 1,n do -- iterate over batches in the split
             -- fetch a batch
-            local x, y, x_char, y_char = loader:next_batch(split_idx)
+            local x, y, x_char, y_char, x_char_len = loader:next_batch(split_idx)
             if opt.gpuid >= 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
             x = x:float():cuda()
@@ -207,7 +207,8 @@ function eval_split(split_idx, max_batches)
                 clones.rnn[t]:evaluate() -- for dropout proper functioning
                 -- First, we need to run the C2W to generate the word representations from the chars.
                 -- we only need the word itself.
-                x_c2w = protos.c2w:forward(x_char[{{},t}], true, loader.char2idx)
+                debugger.enter()
+                x_c2w = protos.c2w:forward(x_char[{{},t}], x_char_len[{{},t}],true, loader.char2idx)
                 --debugger.enter()
                 local lst = clones.rnn[t]:forward({x_c2w, unpack(rnn_state[t-1])})
                 rnn_state[t] = {}
@@ -293,13 +294,14 @@ function feval(x)
     grad_params_c2w:zero()
     grad_params_v2c:zero()
     ------------------ get minibatch -------------------
-    local x, y, x_char, y_char = loader:next_batch(1) --from train
+    local x, y, x_char, y_char, x_char_len = loader:next_batch(1) --from train
     if opt.gpuid >= 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
-        x = x:float():cuda()
-        y = y:float():cuda()
-        x_char = x_char:float():cuda()
-        y_char = y_char:float():cuda()
+        x = x:cuda()
+        y = y:cuda()
+        x_char = x_char:cuda()
+        y_char = y_char:cuda()
+        x_char_len = x_char_len:cuda()
     end
     ------------------- forward pass -------------------
     local rnn_state = {[0] = init_state_global}
@@ -311,7 +313,7 @@ function feval(x)
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)        
         -- First, we need to run the C2W to generate the word representations from the chars.
         -- we only need the word itself.
-        x_c2w = protos.c2w:forward(x_char[{{},t}], true)
+        x_c2w = protos.c2w:forward(x_char[{{},t}], x_char_len[{{},t}],true)
         x_c2w_tab[t] = x_c2w
         --debugger.enter()
         local lst = clones.rnn[t]:forward({x_c2w, unpack(rnn_state[t-1])})
@@ -348,6 +350,7 @@ function feval(x)
     end
     
     -- Now, bp the RNN.
+    debugger.enter()
     local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones
     for t = opt.seq_length, 1, -1 do
         --table.insert(drnn_state[t], drnn_v2c[t])
@@ -368,7 +371,7 @@ function feval(x)
         end 
         -- Now bp the c2w module
 
-        x_c2w = protos.c2w:backward(x_char[{{},t}], dc2s)
+        x_c2w = protos.c2w:backward(x_char[{{},t}], x_char_len[{{},t}], dc2s)
     end
 
     ------------------------ misc ----------------------
@@ -399,7 +402,7 @@ lr = opt.learning_rate -- starting learning rate which will be decayed
 local iterations = opt.max_epochs * loader.split_sizes[1]
 if char_vecs ~= nil then char_vecs.weight[1]:zero() end -- zero-padding vector is always zero
 for i = 1, iterations do
-    --print(' i = ' .. tostring(i))
+    print(' i = ' .. tostring(i))
     local epoch = i / loader.split_sizes[1]
 
     local timer = torch.Timer()

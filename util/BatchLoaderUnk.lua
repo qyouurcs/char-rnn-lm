@@ -28,7 +28,7 @@ function BatchLoaderUnk.create(data_dir, batch_size, seq_length, max_word_l)
 
     print('loading data files...')
     local all_data = torch.load(tensor_file) -- train, valid, test tensors
-    local all_data_char = torch.load(char_file) -- train, valid, test character indices
+    local all_data_char,all_data_char_len = table.unpack(torch.load(char_file)) -- train, valid, test character indices
     local vocab_mapping = torch.load(vocab_file)
     self.idx2word, self.word2idx, self.idx2char, self.char2idx = table.unpack(vocab_mapping)
     self.vocab_size = #self.idx2word
@@ -52,9 +52,11 @@ function BatchLoaderUnk.create(data_dir, batch_size, seq_length, max_word_l)
        ydata:sub(1,-2):copy(data:sub(2,-1))
        ydata[-1] = data[1]
        local data_char = torch.zeros(data:size(1), self.max_word_l):long()
+       local data_char_len = torch.zeros(data:size(1)):long()
        local y_data_char = data_char:clone()
        for i = 1, data:size(1) do
           data_char[i] = all_data_char[split][i]
+          data_char_len[i] = all_data_char_len[split][i]
           y_data_char[i]:sub(1,-2):copy( all_data_char[split][i]:sub(2,-1) )
           y_data_char[i][-1] = self.char2idx[opt.tokens.ZEROPAD]
        end
@@ -63,6 +65,7 @@ function BatchLoaderUnk.create(data_dir, batch_size, seq_length, max_word_l)
           x_batches = data:view(batch_size, -1):split(seq_length, 2)
           y_batches = ydata:view(batch_size, -1):split(seq_length, 2)
           x_char_batches = data_char:view(batch_size, -1, self.max_word_l):split(seq_length,2)
+          x_char_batches_len = data_char_len:view(batch_size, -1, 1):split(seq_length, 2)
           y_char_batches = y_data_char:view(batch_size, -1, self.max_word_l):split(seq_length, 2)
           nbatches = #x_batches       
           self.split_sizes[split] = nbatches
@@ -73,12 +76,14 @@ function BatchLoaderUnk.create(data_dir, batch_size, seq_length, max_word_l)
           x_batches = {data:resize(1, data:size(1)):expand(batch_size, data:size(2))}
           y_batches = {ydata:resize(1, ydata:size(1)):expand(batch_size, ydata:size(2))}
           data_char = data_char:resize(1, data_char:size(1), data_char:size(2))
+          data_char_len = data_char:resize(1, data_char_len:size(1), 1)
           y_data_char = y_data_char:resize(1, data_char:size(1), data_char:size(2))
           x_char_batches = {data_char:expand(batch_size, data_char:size(2), data_char:size(3))}
+          x_char_batches_len = {data_char_len:expand(batch_size, data_char_len:size(2), 1):split(seq_length, 2)}
           y_char_batches = {y_data_char:expand(batch_size, y_data_char:size(2), y_data_char:size(3))}
           self.split_sizes[split] = 1    
        end
-       self.all_batches[split] = {x_batches, y_batches, x_char_batches, y_char_batches}
+       self.all_batches[split] = {x_batches, y_batches, x_char_batches, y_char_batches, x_char_batches_len}
     end
     self.batch_idx = {0,0,0}
     print(string.format('data load done. Number of batches in train: %d, val: %d, test: %d', 
@@ -100,7 +105,8 @@ function BatchLoaderUnk:next_batch(split_idx)
     end
     -- pull out the correct next batch
     local idx = self.batch_idx[split_idx]
-    return self.all_batches[split_idx][1][idx], self.all_batches[split_idx][2][idx], self.all_batches[split_idx][3][idx],self.all_batches[split_idx][4][idx]
+    --debugger.enter()
+    return self.all_batches[split_idx][1][idx], self.all_batches[split_idx][2][idx], self.all_batches[split_idx][3][idx],self.all_batches[split_idx][4][idx], self.all_batches[split_idx][5][idx]
 
 end
 
@@ -110,6 +116,7 @@ function BatchLoaderUnk.text_to_tensor(input_files, out_vocabfile, out_tensorfil
     local f, rawdata
     local output_tensors = {} -- output tensors for train/val/test
     local output_chars = {} -- output character tensors for train/val/test sets
+    local output_chars_len = {} -- output character tensors for train/val/test sets
     local vocab_count = {} -- vocab count 
     local max_word_l_tmp = 0 -- max word length of the corpus
     local idx2word = {tokens.UNK} -- unknown word token
@@ -153,6 +160,7 @@ function BatchLoaderUnk.text_to_tensor(input_files, out_vocabfile, out_tensorfil
         -- Watch out the second one needs a lot of RAM.
         output_tensors[split] = torch.LongTensor(split_counts[split])
         output_chars[split] = torch.ones(split_counts[split], max_word_l):long()
+        output_chars_len[split] = torch.ones(split_counts[split]):long()
 
         f = io.open(input_files[split], 'r')
         local word_num = 0
@@ -192,6 +200,7 @@ function BatchLoaderUnk.text_to_tensor(input_files, out_vocabfile, out_tensorfil
                     for i = 1, math.min(#chars, max_word_l) do
                         output_chars[split][word_num][i] = chars[i]
                     end
+                    output_chars_len[split][word_num] = math.min(#chars, max_word_l)
 
                     if #chars == max_word_l then
                         chars[#chars] = char2idx[tokens.END]
@@ -211,7 +220,7 @@ function BatchLoaderUnk.text_to_tensor(input_files, out_vocabfile, out_tensorfil
     print('saving ' .. out_tensorfile)
     torch.save(out_tensorfile, output_tensors)
     print('saving ' .. out_charfile)
-    torch.save(out_charfile, output_chars)
+    torch.save(out_charfile, {output_chars, output_chars_len})
 end
 
 return BatchLoaderUnk
